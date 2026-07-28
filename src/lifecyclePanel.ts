@@ -240,6 +240,20 @@ function graphContent(
         for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
         return node;
       }
+      function displayLabel(node) {
+        const label = node.label.replaceAll('.<locals>.',' › ');
+        return node.kind === 'class' ? 'Class · '+label : label;
+      }
+      function clipMiddle(value, maximum) {
+        if (value.length <= maximum) return value;
+        const left = Math.ceil((maximum-1)*0.42);
+        const right = maximum-1-left;
+        return value.slice(0,left)+'…'+value.slice(-right);
+      }
+      function nodeWidth(node) {
+        const longest = Math.max(displayLabel(node).length,node.detail.length);
+        return Math.max(210,Math.min(360,longest*7+24));
+      }
       function graphData() {
         const resolved = result.nodes.filter((node) => node.role !== 'unresolved' && directionVisible(node) && testVisible(node));
         let resolvedIds = new Set(resolved.map((node) => node.id));
@@ -293,7 +307,7 @@ function graphContent(
         const nodes = data.nodes;
         const edges = data.edges;
         const layout = new dagre.graphlib.Graph().setGraph({rankdir:'LR',ranksep:90,nodesep:30,marginx:35,marginy:35}).setDefaultEdgeLabel(()=>({}));
-        for (const node of nodes) layout.setNode(node.id,{width:190,height:58});
+        for (const node of nodes) layout.setNode(node.id,{width:nodeWidth(node),height:62});
         for (const edge of edges) layout.setEdge(edge.source,edge.target);
         dagre.layout(layout);
         for (const edge of edges) {
@@ -304,13 +318,13 @@ function graphContent(
         }
         for (const node of nodes) {
           const position = layout.node(node.id);
-          const group = element('g',{class:'node '+node.role+' '+node.kind,transform:'translate('+(position.x-95)+','+(position.y-29)+')',tabindex:'0',role:'button','data-node-id':node.id});
-          group.append(element('rect',{width:190,height:58,rx:7}));
+          const group = element('g',{class:'node '+node.role+' '+node.kind,transform:'translate('+(position.x-position.width/2)+','+(position.y-position.height/2)+')',tabindex:'0',role:'button','data-node-id':node.id});
+          group.append(element('rect',{width:position.width,height:position.height,rx:7}));
           const label = element('text',{x:12,y:23,class:'node-label'});
-          const displayLabel = node.kind === 'class' ? 'Class · '+node.label : node.label;
-          label.textContent = displayLabel.length > 27 ? displayLabel.slice(0,26)+'…' : displayLabel;
+          const characterLimit = Math.floor((position.width-24)/7);
+          label.textContent = clipMiddle(displayLabel(node),characterLimit);
           const detail = element('text',{x:12,y:43,class:'node-detail'});
-          detail.textContent = node.detail.length > 31 ? node.detail.slice(0,30)+'…' : node.detail;
+          detail.textContent = clipMiddle(node.detail,characterLimit);
           const title = element('title');
           title.textContent = node.label+' — '+node.detail;
           group.append(title,label,detail);
