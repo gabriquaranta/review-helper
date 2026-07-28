@@ -28,7 +28,7 @@ class LifecycleRequest(TypedDict):
     """
 
     files: list[SourceFileRequest]
-    selectedFunctionId: str
+    selectedSymbolId: str
     maxNodes: int
 
 
@@ -47,6 +47,7 @@ class LifecycleNodeJson(TypedDict):
     role: Literal["selected", "entrypoint", "caller", "callee", "both", "unresolved"]
     entrypointReason: str | None
     isTest: bool
+    kind: Literal["function", "class", "unresolved"]
 
 
 class LifecycleEdgeJson(TypedDict):
@@ -57,6 +58,7 @@ class LifecycleEdgeJson(TypedDict):
 
     source: str
     target: str
+    kind: Literal["calls", "contains", "constructs", "inherits"]
 
 
 class LifecycleResultJson(TypedDict):
@@ -65,7 +67,7 @@ class LifecycleResultJson(TypedDict):
     The response includes partial-result metadata instead of silently dropping information.
     """
 
-    selectedFunctionId: str
+    selectedSymbolId: str
     nodes: list[LifecycleNodeJson]
     edges: list[LifecycleEdgeJson]
     truncated: bool
@@ -106,6 +108,28 @@ class FunctionDefinition:
 
 
 @dataclass(frozen=True)
+class ClassDefinition:
+    """Store one discovered class and its lexical context.
+
+    First-class class identities make structural relationships navigable without runtime guessing.
+    """
+
+    id: str
+    name: str
+    qualified_name: str
+    canonical: str
+    module: str
+    path: str
+    line: int
+    column: int
+    node: ast.ClassDef
+    imports: dict[str, ImportTarget]
+
+
+SymbolDefinition = FunctionDefinition | ClassDefinition
+
+
+@dataclass(frozen=True)
 class ModuleIndex:
     """Store definitions and imports belonging to one module.
 
@@ -116,6 +140,7 @@ class ModuleIndex:
     path: str
     tree: ast.Module
     definitions: tuple[FunctionDefinition, ...]
+    classes: tuple[ClassDefinition, ...]
     imports: dict[str, ImportTarget]
 
 
@@ -134,13 +159,28 @@ class DefinitionCollector(ast.NodeVisitor):
         self.module = module
         self.module_imports = imports
         self.definitions: list[FunctionDefinition] = []
+        self.classes: list[ClassDefinition] = []
         self.scope: list[tuple[str, Literal["class", "function"]]] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Visit definitions inside a class.
+        """Collect a class and visit definitions inside it.
 
-        Class scope is retained so self, cls, and explicit class calls resolve exactly.
+        Class scope is retained so structural ownership and method calls resolve exactly.
         """
+        qualified_name = ".".join((*[name for name, _ in self.scope], node.name))
+        canonical = f"{self.module}.{qualified_name}" if self.module else qualified_name
+        self.classes.append(ClassDefinition(
+            id=f"{self.path}:{node.lineno - 1}:{node.col_offset}",
+            name=node.name,
+            qualified_name=qualified_name,
+            canonical=canonical,
+            module=self.module,
+            path=self.path,
+            line=node.lineno - 1,
+            column=node.col_offset,
+            node=node,
+            imports=self.module_imports,
+        ))
         self.scope.append((node.name, "class"))
         self.generic_visit(node)
         self.scope.pop()
@@ -508,6 +548,27 @@ def attribute_parts(node: ast.expr) -> list[str] | None:
     return None
 
 
+def resolve_class_reference(
+    expression: ast.expr,
+    module: str,
+    imports: dict[str, ImportTarget],
+    class_canonicals: set[str],
+) -> str | None:
+    """Resolve an exact expression to a workspace class.
+
+    Shared import-aware resolution keeps constructors and inheritance deterministic.
+    """
+    parts = attribute_parts(expression)
+    if not parts:
+        return None
+    candidates: list[str] = []
+    imported = imports.get(parts[0])
+    if imported:
+        candidates.append(".".join((imported.canonical, *parts[1:])))
+    candidates.append(f"{module}.{'.'.join(parts)}" if module else ".".join(parts))
+    return next((candidate for candidate in candidates if candidate in class_canonicals), None)
+
+
 def resolve_call(
     call: ast.Call,
     owner: FunctionDefinition,
@@ -624,10 +685,10 @@ def decorated_entrypoint_reason(definition: FunctionDefinition) -> str | None:
     return None
 
 
-def is_test_definition(definition: FunctionDefinition) -> bool:
-    """Return whether a function belongs to test code.
+def is_test_symbol(definition: SymbolDefinition) -> bool:
+    """Return whether a function or class belongs to test code.
 
-    Exact module and filename conventions support a UI filter without hiding application symbols heuristically.
+    One symbol-level predicate keeps class and function filtering consistent.
     """
     module = definition.module.split("|", 1)[-1]
     parts = module.split(".")
@@ -658,14 +719,15 @@ def module_index(source_file: SourceFileRequest) -> tuple[ModuleIndex | None, st
         source_file["path"],
         tree,
         tuple(collector.definitions),
+        tuple(collector.classes),
         imports,
     ), None
 
 
 def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
-    """Build the reachable lifecycle graph for the selected function.
+    """Build the reachable lifecycle graph for the selected symbol.
 
-    Bidirectional traversal exposes both entry paths and downstream effects with a hard size bound.
+    Typed function and class relationships expose behavior and structure with a hard size bound.
     """
     indexes: list[ModuleIndex] = []
     warnings: list[str] = []
@@ -680,27 +742,56 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
         for index in indexes
         for definition in index.definitions
     }
-    by_id = {definition.id: definition for definition in by_canonical.values()}
-    selected = by_id.get(request["selectedFunctionId"])
+    classes_by_canonical = {
+        definition.canonical: definition
+        for index in indexes
+        for definition in index.classes
+    }
+    symbols_by_canonical: dict[str, SymbolDefinition] = {
+        **by_canonical,
+        **classes_by_canonical,
+    }
+    by_id = {definition.id: definition for definition in symbols_by_canonical.values()}
+    selected = by_id.get(request["selectedSymbolId"])
     if not selected:
         return {
-            "selectedFunctionId": request["selectedFunctionId"],
+            "selectedSymbolId": request["selectedSymbolId"],
             "nodes": [],
             "edges": [],
             "truncated": False,
             "warnings": warnings,
-            "error": "The selected function was not found in the workspace index.",
+            "error": "The selected symbol was not found in the workspace index.",
         }
 
-    resolved_edges: set[tuple[str, str]] = set()
+    EdgeKind = Literal["calls", "contains", "constructs", "inherits"]
+    resolved_edges: set[tuple[str, str, EdgeKind]] = set()
     unresolved_by_owner: dict[str, set[str]] = {}
-    outgoing: dict[str, set[str]] = {canonical: set() for canonical in by_canonical}
-    incoming: dict[str, set[str]] = {canonical: set() for canonical in by_canonical}
-    class_canonicals = {
-        definition.class_canonical
-        for definition in by_canonical.values()
-        if definition.class_canonical
-    }
+    outgoing: dict[str, set[str]] = {canonical: set() for canonical in symbols_by_canonical}
+    incoming: dict[str, set[str]] = {canonical: set() for canonical in symbols_by_canonical}
+    class_canonicals = set(classes_by_canonical)
+
+    def connect(source: str, target: str, kind: EdgeKind) -> None:
+        """Add one typed relationship to every graph index.
+
+        Centralized insertion keeps traversal and rendered edges consistent.
+        """
+        resolved_edges.add((source, target, kind))
+        outgoing[source].add(target)
+        incoming[target].add(source)
+
+    for definition in by_canonical.values():
+        if definition.class_canonical in classes_by_canonical:
+            connect(definition.class_canonical, definition.canonical, "contains")
+    for definition in classes_by_canonical.values():
+        for base in definition.node.bases:
+            target = resolve_class_reference(
+                base,
+                definition.module,
+                definition.imports,
+                class_canonicals,
+            )
+            if target:
+                connect(target, definition.canonical, "inherits")
     bindings_by_owner = {
         owner.canonical: BindingCollector(owner, class_canonicals).collect()
         for owner in by_canonical.values()
@@ -729,17 +820,22 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
         for call in BodyCallCollector(owner.node.body).collect():
             if isinstance(call.func, ast.Name) and call.func.id in callable_aliases:
                 for target in callable_aliases[call.func.id]:
-                    resolved_edges.add((owner.canonical, target))
-                    outgoing[owner.canonical].add(target)
-                    incoming[target].add(owner.canonical)
+                    connect(owner.canonical, target, "calls")
                 continue
             target, label = resolve_call(call, owner, by_canonical, bindings)
             if target:
-                resolved_edges.add((owner.canonical, target))
-                outgoing[owner.canonical].add(target)
-                incoming[target].add(owner.canonical)
+                connect(owner.canonical, target, "calls")
             else:
-                unresolved_by_owner.setdefault(owner.canonical, set()).add(label)
+                constructed = resolve_class_reference(
+                    call.func,
+                    owner.module,
+                    owner.imports,
+                    class_canonicals,
+                )
+                if constructed:
+                    connect(owner.canonical, constructed, "constructs")
+                else:
+                    unresolved_by_owner.setdefault(owner.canonical, set()).add(label)
 
     entrypoint_reasons: dict[str, str] = {}
     for definition in by_canonical.values():
@@ -758,7 +854,7 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
                 if target:
                     entrypoint_reasons[target] = "__main__ guard entrypoint"
     for canonical in by_canonical:
-        if not incoming[canonical]:
+        if not any(target == canonical and kind == "calls" for _, target, kind in resolved_edges):
             entrypoint_reasons.setdefault(canonical, "No resolved callers")
 
     max_nodes = max(1, min(request["maxNodes"], 100))
@@ -792,7 +888,7 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
     resolved = caller_nodes | callee_nodes | {selected_canonical}
     nodes: list[LifecycleNodeJson] = []
     for canonical in sorted(resolved):
-        definition = by_canonical[canonical]
+        definition = symbols_by_canonical[canonical]
         if canonical == selected_canonical:
             role: Literal["selected", "entrypoint", "caller", "callee", "both", "unresolved"] = "selected"
         elif canonical in entrypoint_reasons:
@@ -817,12 +913,13 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
             "column": definition.column,
             "role": role,
             "entrypointReason": entrypoint_reasons.get(canonical),
-            "isTest": is_test_definition(definition),
+            "isTest": is_test_symbol(definition),
+            "kind": "class" if isinstance(definition, ClassDefinition) else "function",
         })
-    canonical_to_id = {canonical: by_canonical[canonical].id for canonical in resolved}
+    canonical_to_id = {canonical: symbols_by_canonical[canonical].id for canonical in resolved}
     edges: list[LifecycleEdgeJson] = [
-        {"source": canonical_to_id[source], "target": canonical_to_id[target]}
-        for source, target in sorted(resolved_edges)
+        {"source": canonical_to_id[source], "target": canonical_to_id[target], "kind": kind}
+        for source, target, kind in sorted(resolved_edges)
         if source in resolved and target in resolved
     ]
     unresolved_count = len(nodes)
@@ -841,12 +938,13 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
                 "column": None,
                 "role": "unresolved",
                 "entrypointReason": None,
-                "isTest": is_test_definition(by_canonical[owner]),
+                "isTest": is_test_symbol(symbols_by_canonical[owner]),
+                "kind": "unresolved",
             })
-            edges.append({"source": canonical_to_id[owner], "target": node_id})
+            edges.append({"source": canonical_to_id[owner], "target": node_id, "kind": "calls"})
             unresolved_count += 1
     return {
-        "selectedFunctionId": request["selectedFunctionId"],
+        "selectedSymbolId": request["selectedSymbolId"],
         "nodes": nodes,
         "edges": edges,
         "truncated": truncated,

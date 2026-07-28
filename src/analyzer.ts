@@ -32,16 +32,16 @@ export async function analyzeDocument(
     process.stderr.setEncoding("utf8");
     process.stdout.on("data", (chunk: string) => { output += chunk; });
     process.stderr.on("data", (chunk: string) => { errorOutput += chunk; });
-    process.on("error", (error: Error) => resolve({ file: document.uri.fsPath, metrics: [], functions: [], error: error.message }));
+    process.on("error", (error: Error) => resolve({ file: document.uri.fsPath, metrics: [], functions: [], classes: [], error: error.message }));
     process.on("close", (code: number | null) => {
       if (code !== 0) {
-        resolve({ file: document.uri.fsPath, metrics: [], functions: [], error: errorOutput.trim() || `Analyzer exited with code ${code ?? "unknown"}.` });
+        resolve({ file: document.uri.fsPath, metrics: [], functions: [], classes: [], error: errorOutput.trim() || `Analyzer exited with code ${code ?? "unknown"}.` });
         return;
       }
       try {
         resolve(JSON.parse(output) as AnalysisResult);
       } catch {
-        resolve({ file: document.uri.fsPath, metrics: [], functions: [], error: "The analyzer returned invalid JSON." });
+        resolve({ file: document.uri.fsPath, metrics: [], functions: [], classes: [], error: "The analyzer returned invalid JSON." });
       }
     });
     process.stdin.end(JSON.stringify(request));

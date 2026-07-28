@@ -12,7 +12,7 @@ interface LifecycleSourceFile {
 
 interface LifecycleRequest {
   readonly files: readonly LifecycleSourceFile[];
-  readonly selectedFunctionId: string;
+  readonly selectedSymbolId: string;
   readonly maxNodes: number;
 }
 
@@ -35,18 +35,18 @@ const defaultExclusions: readonly string[] = [
  * Lifecycle analysis stays on demand so editing a document never triggers a workspace scan.
  */
 export async function analyzeLifecycle(
-  selectedFunctionId: string,
+  selectedSymbolId: string,
   pythonPath: string,
   extensionPath: string,
 ): Promise<LifecycleResult> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
-    return emptyResult(selectedFunctionId, "Open a workspace folder to analyze a function lifecycle.");
+    return emptyResult(selectedSymbolId, "Open a workspace folder to analyze a symbol lifecycle.");
   }
   const exclude = exclusionGlob();
   const uris = await vscode.workspace.findFiles("**/*.py", exclude, 2001);
   if (uris.length > 2000) {
-    return emptyResult(selectedFunctionId, "Lifecycle analysis is limited to workspaces containing at most 2,000 Python files.");
+    return emptyResult(selectedSymbolId, "Lifecycle analysis is limited to workspaces containing at most 2,000 Python files.");
   }
   const openDocuments = new Map(
     vscode.workspace.textDocuments
@@ -71,7 +71,7 @@ export async function analyzeLifecycle(
   }));
   const request: LifecycleRequest = {
     files,
-    selectedFunctionId,
+    selectedSymbolId,
     maxNodes: 100,
   };
   return runAnalyzer(request, pythonPath, extensionPath);
@@ -143,11 +143,11 @@ function runAnalyzer(
     process.stderr.setEncoding("utf8");
     process.stdout.on("data", (chunk: string) => { output += chunk; });
     process.stderr.on("data", (chunk: string) => { errorOutput += chunk; });
-    process.on("error", (error: Error) => resolve(emptyResult(request.selectedFunctionId, error.message)));
+    process.on("error", (error: Error) => resolve(emptyResult(request.selectedSymbolId, error.message)));
     process.on("close", (code: number | null) => {
       if (code !== 0) {
         resolve(emptyResult(
-          request.selectedFunctionId,
+          request.selectedSymbolId,
           errorOutput.trim() || `Lifecycle analyzer exited with code ${code ?? "unknown"}.`,
         ));
         return;
@@ -155,7 +155,7 @@ function runAnalyzer(
       try {
         resolve(JSON.parse(output) as LifecycleResult);
       } catch {
-        resolve(emptyResult(request.selectedFunctionId, "The lifecycle analyzer returned invalid JSON."));
+        resolve(emptyResult(request.selectedSymbolId, "The lifecycle analyzer returned invalid JSON."));
       }
     });
     process.stdin.end(JSON.stringify(request));
@@ -167,9 +167,9 @@ function runAnalyzer(
  *
  * Returning failures through the normal contract lets the graph panel render a stable error state.
  */
-function emptyResult(selectedFunctionId: string, error: string): LifecycleResult {
+function emptyResult(selectedSymbolId: string, error: string): LifecycleResult {
   return {
-    selectedFunctionId,
+    selectedSymbolId,
     nodes: [],
     edges: [],
     truncated: false,

@@ -7,11 +7,11 @@ type LifecyclePanelMessage =
   | { readonly command: "goBack" };
 
 interface LifecycleSelection {
-  readonly functionId: string;
+  readonly symbolId: string;
   readonly label: string;
 }
 
-type LifecycleLoader = (functionId: string) => Promise<LifecycleResult>;
+type LifecycleLoader = (symbolId: string) => Promise<LifecycleResult>;
 
 export class LifecyclePanel {
   private readonly panel: vscode.WebviewPanel;
@@ -23,7 +23,7 @@ export class LifecyclePanel {
   private requestVersion = 0;
 
   /**
-   * Create and initialize a function lifecycle panel.
+   * Create and initialize a symbol lifecycle panel.
    *
    * Rendering the loading state immediately makes the on-demand workspace scan explicit.
    */
@@ -66,7 +66,7 @@ export class LifecyclePanel {
   }
 
   /**
-   * Load and render one function lifecycle.
+   * Load and render one symbol lifecycle.
    *
    * Versioning prevents a slower previous request from replacing the latest selection.
    */
@@ -78,9 +78,9 @@ export class LifecyclePanel {
     const currentVersion = ++this.requestVersion;
     let result: LifecycleResult;
     try {
-      result = await this.loadLifecycle(selection.functionId);
+      result = await this.loadLifecycle(selection.symbolId);
     } catch (error) {
-      result = failureResult(selection.functionId, error instanceof Error ? error.message : "Lifecycle analysis failed.");
+      result = failureResult(selection.symbolId, error instanceof Error ? error.message : "Lifecycle analysis failed.");
     }
     if (currentVersion !== this.requestVersion) return;
     this.navigableNodes = new Map(result.nodes.flatMap((node) =>
@@ -92,18 +92,18 @@ export class LifecyclePanel {
   }
 
   /**
-   * Shift the panel to a resolved graph function.
+   * Shift the panel to a resolved graph symbol.
    *
    * Looking up the selection host-side prevents arbitrary IDs or labels from entering navigation history.
    */
   private async selectNode(nodeId: string): Promise<void> {
-    if (nodeId === this.currentSelection?.functionId) {
+    if (nodeId === this.currentSelection?.symbolId) {
       await this.openNode(nodeId);
       return;
     }
     const target = this.navigableNodes.get(nodeId);
     if (!target) return;
-    await this.navigate({ functionId: nodeId, label: target.label }, true);
+    await this.navigate({ symbolId: nodeId, label: target.label }, true);
   }
 
   /**
@@ -139,7 +139,7 @@ export class LifecyclePanel {
  */
 function loadingContent(): string {
   return `<!doctype html><html><head><meta charset="UTF-8"><style>${baseStyles()}</style></head>
-    <body class="state"><div class="spinner"></div><h1>Analyzing function lifecycle…</h1>
+    <body class="state"><div class="spinner"></div><h1>Analyzing symbol lifecycle…</h1>
     <p>Indexing Python files in the current workspace.</p></body></html>`;
 }
 
@@ -148,9 +148,9 @@ function loadingContent(): string {
  *
  * Keeping failures inside the normal result contract preserves a stable panel error state.
  */
-function failureResult(selectedFunctionId: string, error: string): LifecycleResult {
+function failureResult(selectedSymbolId: string, error: string): LifecycleResult {
   return {
-    selectedFunctionId,
+    selectedSymbolId,
     nodes: [],
     edges: [],
     truncated: false,
@@ -176,7 +176,7 @@ function graphContent(
   }
   if (result.nodes.length === 0) {
     return `<!doctype html><html><head><meta charset="UTF-8"><style>${baseStyles()}</style></head>
-      <body class="state"><h1>No lifecycle found</h1><p>No statically resolvable functions are connected to this function.</p></body></html>`;
+      <body class="state"><h1>No lifecycle found</h1><p>No statically resolvable symbols are connected to this symbol.</p></body></html>`;
   }
   const nonce = createNonce();
   const dagreUri = webview.asWebviewUri(
@@ -192,7 +192,7 @@ function graphContent(
   return `<!doctype html><html><head><meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
     <style nonce="${nonce}">${baseStyles()}${graphStyles()}</style></head><body>
-    <header><div class="heading"><button id="back" type="button" class="back" ${canGoBack ? "" : "disabled"} aria-label="Go to previous function">Back</button><div><h1>Function lifecycle</h1><p>Static workspace callers and callees</p></div></div>
+    <header><div class="heading"><button id="back" type="button" class="back" ${canGoBack ? "" : "disabled"} aria-label="Go to previous symbol">Back</button><div><h1>Code lifecycle</h1><p>Static calls, construction, ownership, and inheritance</p></div></div>
       <div class="controls">
         <label>View <select id="view-mode"><option value="focused">Focused</option><option value="neighborhood">Neighborhood</option><option value="complete">Complete</option></select></label>
         <label><input id="callers" type="checkbox" checked> Callers</label>
@@ -203,8 +203,9 @@ function graphContent(
       </div>
     </header>${truncated}${warning}
     <div class="legend"><span class="selected-key">Selected</span><span class="entrypoint-key">Entrypoint</span><span class="caller-key">Caller</span>
-      <span class="callee-key">Callee</span><span class="both-key">Both</span><span class="unresolved-key">Unresolved</span></div>
-    <main id="viewport"><svg id="graph" role="img" aria-label="Function lifecycle graph">
+      <span class="callee-key">Callee</span><span class="both-key">Both</span><span class="class-key">Class</span><span class="unresolved-key">Unresolved</span>
+      <span class="relationship-key">Edges: call · owns · creates · inherits</span></div>
+    <main id="viewport"><svg id="graph" role="img" aria-label="Code lifecycle graph">
       <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
         <path d="M0,0 L8,4 L0,8 z"></path></marker></defs><g id="canvas"></g></svg></main>
     <script nonce="${nonce}" src="${dagreUri}"></script>
@@ -232,7 +233,7 @@ function graphContent(
         return callers.checked || callees.checked;
       }
       function testVisible(node) {
-        return includeTests.checked || !node.isTest || node.id === result.selectedFunctionId;
+        return includeTests.checked || !node.isTest || node.id === result.selectedSymbolId;
       }
       function element(name, attributes = {}) {
         const node = document.createElementNS('http://www.w3.org/2000/svg', name);
@@ -243,10 +244,10 @@ function graphContent(
         const resolved = result.nodes.filter((node) => node.role !== 'unresolved' && directionVisible(node) && testVisible(node));
         let resolvedIds = new Set(resolved.map((node) => node.id));
         if (viewMode.value === 'neighborhood') {
-          const neighborhoodIds = new Set([result.selectedFunctionId]);
+          const neighborhoodIds = new Set([result.selectedSymbolId]);
           for (const edge of result.edges) {
-            if (edge.source === result.selectedFunctionId) neighborhoodIds.add(edge.target);
-            if (edge.target === result.selectedFunctionId) neighborhoodIds.add(edge.source);
+            if (edge.source === result.selectedSymbolId) neighborhoodIds.add(edge.target);
+            if (edge.target === result.selectedSymbolId) neighborhoodIds.add(edge.source);
           }
           resolvedIds = new Set([...resolvedIds].filter((id) => neighborhoodIds.has(id)));
         }
@@ -278,9 +279,10 @@ function graphContent(
               role:'unresolved',
               entrypointReason:null,
               isTest:ownerNode?.isTest || false,
+              kind:'unresolved',
               aggregateOwner:owner,
             });
-            edges.push({source:owner,target:aggregateId});
+            edges.push({source:owner,target:aggregateId,kind:'calls'});
           }
         }
         return {nodes,edges};
@@ -297,15 +299,16 @@ function graphContent(
         for (const edge of edges) {
           const positioned = layout.edge(edge.source,edge.target);
           if (!positioned) continue;
-          const path = element('path',{class:'edge',d:'M'+positioned.points.map((point) => point.x+','+point.y).join(' L'),'marker-end':'url(#arrow)','data-source':edge.source,'data-target':edge.target});
+          const path = element('path',{class:'edge '+edge.kind,d:'M'+positioned.points.map((point) => point.x+','+point.y).join(' L'),'marker-end':'url(#arrow)','data-source':edge.source,'data-target':edge.target});
           canvas.append(path);
         }
         for (const node of nodes) {
           const position = layout.node(node.id);
-          const group = element('g',{class:'node '+node.role,transform:'translate('+(position.x-95)+','+(position.y-29)+')',tabindex:'0',role:'button','data-node-id':node.id});
+          const group = element('g',{class:'node '+node.role+' '+node.kind,transform:'translate('+(position.x-95)+','+(position.y-29)+')',tabindex:'0',role:'button','data-node-id':node.id});
           group.append(element('rect',{width:190,height:58,rx:7}));
           const label = element('text',{x:12,y:23,class:'node-label'});
-          label.textContent = node.label.length > 27 ? node.label.slice(0,26)+'…' : node.label;
+          const displayLabel = node.kind === 'class' ? 'Class · '+node.label : node.label;
+          label.textContent = displayLabel.length > 27 ? displayLabel.slice(0,26)+'…' : displayLabel;
           const detail = element('text',{x:12,y:43,class:'node-detail'});
           detail.textContent = node.detail.length > 31 ? node.detail.slice(0,30)+'…' : node.detail;
           const title = element('title');
@@ -316,7 +319,7 @@ function graphContent(
             group.addEventListener('click',expand);
             group.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();expand();}});
           } else if (node.uri !== null && node.line !== null && node.column !== null) {
-            const select = () => vscode.postMessage({command:node.id===result.selectedFunctionId?'openNode':'selectNode',nodeId:node.id});
+            const select = () => vscode.postMessage({command:node.id===result.selectedSymbolId?'openNode':'selectNode',nodeId:node.id});
             group.addEventListener('click',select);
             group.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select();}});
           } else {
@@ -340,7 +343,7 @@ function graphContent(
         applyView();
       }
       function centerSelected(){
-        const selected=currentLayout?.node(result.selectedFunctionId);
+        const selected=currentLayout?.node(result.selectedSymbolId);
         if(!selected)return;
         const aspect=Math.max(viewport.clientWidth/Math.max(viewport.clientHeight,1),1);
         const width=900;
@@ -395,7 +398,7 @@ function baseStyles(): string {
  * Role colors and interaction states make direction and navigability legible without custom assets.
  */
 function graphStyles(): string {
-  return `header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.heading{display:flex;align-items:center;gap:10px}.back{font:inherit;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);border:0;padding:5px 9px;border-radius:3px;cursor:pointer}.back:hover:not(:disabled){background:var(--vscode-button-secondaryHoverBackground)}.back:disabled{opacity:.45;cursor:default}.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.controls label{white-space:nowrap}.controls select{margin-left:4px;font:inherit;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background);border:1px solid var(--vscode-dropdown-border);padding:4px 22px 4px 7px;border-radius:3px}.controls button{font:inherit;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:5px 10px;border-radius:3px;cursor:pointer}.controls button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}.controls button:hover{background:var(--vscode-button-hoverBackground)}.controls button.secondary:hover{background:var(--vscode-button-secondaryHoverBackground)}.notice{padding:8px 10px;margin-bottom:8px;border-left:3px solid var(--vscode-editorWarning-foreground);background:var(--vscode-textBlockQuote-background)}details{margin:8px 0;color:var(--vscode-descriptionForeground)}details ul{max-height:110px;overflow:auto}.legend{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:11px;color:var(--vscode-descriptionForeground)}.legend span::before{content:'';display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:2px;background:var(--key)}.selected-key{--key:var(--vscode-focusBorder)}.entrypoint-key{--key:#e05252}.caller-key{--key:#a855f7}.callee-key{--key:#22a06b}.both-key{--key:#d29922}.unresolved-key{--key:var(--vscode-disabledForeground)}main{height:calc(100vh - 125px);min-height:320px;border:1px solid var(--vscode-panel-border);border-radius:6px;overflow:hidden;background:var(--vscode-sideBar-background)}svg{width:100%;height:100%;cursor:grab;touch-action:none}svg:active{cursor:grabbing}.edge{fill:none;stroke:var(--vscode-descriptionForeground);stroke-width:1.4;opacity:.65;transition:opacity .12s}marker path{fill:var(--vscode-descriptionForeground)}.node{cursor:pointer;transition:opacity .12s}.node.dimmed,.edge.dimmed{opacity:.12}.node rect{fill:var(--vscode-editorWidget-background);stroke:var(--vscode-panel-border);stroke-width:2}.node:hover rect,.node:focus rect{stroke:var(--vscode-focusBorder)}.node:focus{outline:none}.node.selected rect{stroke:var(--vscode-focusBorder);fill:color-mix(in srgb,var(--vscode-focusBorder) 14%,var(--vscode-editorWidget-background))}.node.entrypoint rect{stroke:#e05252;stroke-width:3}.node.caller rect{stroke:#a855f7}.node.callee rect{stroke:#22a06b}.node.both rect{stroke:#d29922}.node.unresolved rect{stroke:var(--vscode-disabledForeground);stroke-dasharray:5 4;opacity:.8}.node-label{fill:var(--vscode-foreground);font-size:12px;font-weight:600}.node-detail{fill:var(--vscode-descriptionForeground);font-size:10px}`;
+  return `header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.heading{display:flex;align-items:center;gap:10px}.back{font:inherit;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);border:0;padding:5px 9px;border-radius:3px;cursor:pointer}.back:hover:not(:disabled){background:var(--vscode-button-secondaryHoverBackground)}.back:disabled{opacity:.45;cursor:default}.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.controls label{white-space:nowrap}.controls select{margin-left:4px;font:inherit;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background);border:1px solid var(--vscode-dropdown-border);padding:4px 22px 4px 7px;border-radius:3px}.controls button{font:inherit;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:5px 10px;border-radius:3px;cursor:pointer}.controls button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}.controls button:hover{background:var(--vscode-button-hoverBackground)}.controls button.secondary:hover{background:var(--vscode-button-secondaryHoverBackground)}.notice{padding:8px 10px;margin-bottom:8px;border-left:3px solid var(--vscode-editorWarning-foreground);background:var(--vscode-textBlockQuote-background)}details{margin:8px 0;color:var(--vscode-descriptionForeground)}details ul{max-height:110px;overflow:auto}.legend{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:11px;color:var(--vscode-descriptionForeground)}.legend span::before{content:'';display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:2px;background:var(--key)}.selected-key{--key:var(--vscode-focusBorder)}.entrypoint-key{--key:#e05252}.caller-key{--key:#a855f7}.callee-key{--key:#22a06b}.both-key{--key:#d29922}.class-key{--key:#3b82f6}.unresolved-key{--key:var(--vscode-disabledForeground)}.relationship-key::before{display:none!important}main{height:calc(100vh - 125px);min-height:320px;border:1px solid var(--vscode-panel-border);border-radius:6px;overflow:hidden;background:var(--vscode-sideBar-background)}svg{width:100%;height:100%;cursor:grab;touch-action:none}svg:active{cursor:grabbing}.edge{fill:none;stroke:var(--vscode-descriptionForeground);stroke-width:1.4;opacity:.65;transition:opacity .12s}.edge.contains{stroke-dasharray:3 3}.edge.constructs{stroke:#3b82f6;stroke-width:1.8}.edge.inherits{stroke:#d29922;stroke-width:1.8}marker path{fill:var(--vscode-descriptionForeground)}.node{cursor:pointer;transition:opacity .12s}.node.dimmed,.edge.dimmed{opacity:.12}.node rect{fill:var(--vscode-editorWidget-background);stroke:var(--vscode-panel-border);stroke-width:2}.node.class rect{stroke-width:3;stroke-dasharray:7 2}.node:hover rect,.node:focus rect{stroke:var(--vscode-focusBorder)}.node:focus{outline:none}.node.selected rect{stroke:var(--vscode-focusBorder);fill:color-mix(in srgb,var(--vscode-focusBorder) 14%,var(--vscode-editorWidget-background))}.node.entrypoint rect{stroke:#e05252;stroke-width:3}.node.caller rect{stroke:#a855f7}.node.callee rect{stroke:#22a06b}.node.both rect{stroke:#d29922}.node.unresolved rect{stroke:var(--vscode-disabledForeground);stroke-dasharray:5 4;opacity:.8}.node-label{fill:var(--vscode-foreground);font-size:12px;font-weight:600}.node-detail{fill:var(--vscode-descriptionForeground);font-size:10px}`;
 }
 
 /**

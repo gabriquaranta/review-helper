@@ -46,6 +46,17 @@ class FunctionJson(TypedDict):
     metrics: list[MetricJson]
 
 
+class ClassJson(TypedDict):
+    """Represent one uniquely identified class in the JSON contract."""
+
+    id: str
+    qualifiedName: str
+    uri: str
+    line: int
+    column: int
+    range: RangeJson
+
+
 class SummaryJson(TypedDict):
     """Represent an aggregated metric for the active file."""
 
@@ -64,6 +75,7 @@ class AnalysisJson(TypedDict):
     file: str
     metrics: list[SummaryJson]
     functions: list[FunctionJson]
+    classes: list[ClassJson]
     error: str | None
 
 
@@ -92,6 +104,17 @@ class FunctionSpec:
     qualified_name: str
     is_method: bool
     is_staticmethod: bool
+
+
+@dataclass(frozen=True)
+class ClassSpec:
+    """Store a class node and its scope-aware identity.
+
+    Class rows need the same stable navigation identity as function rows.
+    """
+
+    node: ast.ClassDef
+    qualified_name: str
 
 
 def source_range(node: ast.AST) -> RangeJson:
@@ -142,6 +165,7 @@ class FunctionCollector(ast.NodeVisitor):
         A dedicated visitor ensures nested definitions are found without flattening their identities.
         """
         self.functions: list[FunctionSpec] = []
+        self.classes: list[ClassSpec] = []
         self._prefix = ""
         self._parent_kind = "module"
 
@@ -158,6 +182,7 @@ class FunctionCollector(ast.NodeVisitor):
             qualified_name = f"{prefix}.{node.name}"
         else:
             qualified_name = node.name
+        self.classes.append(ClassSpec(node, qualified_name))
         self._visit_body(node.body, qualified_name, "class", True)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -219,6 +244,17 @@ def collect_functions(tree: ast.Module) -> list[FunctionSpec]:
     for statement in tree.body:
         collector.visit(statement)
     return collector.functions
+
+
+def collect_classes(tree: ast.Module) -> list[ClassSpec]:
+    """Collect all classes with qualified names.
+
+    A dedicated result keeps maintainability metrics function-specific while exposing class lifecycle entrypoints.
+    """
+    collector = FunctionCollector()
+    for statement in tree.body:
+        collector.visit(statement)
+    return collector.classes
 
 
 class CyclomaticVisitor(ast.NodeVisitor):
@@ -842,6 +878,24 @@ def function_result(spec: FunctionSpec, source_lines: set[int], file_name: str, 
     }
 
 
+def class_result(spec: ClassSpec, file_name: str) -> ClassJson:
+    """Serialize one class with a stable source identity.
+
+    Exact source coordinates let the lifecycle analyzer select the same class workspace-wide.
+    """
+    node = spec.node
+    line = node.lineno - 1
+    column = node.col_offset
+    return {
+        "id": f"{file_name}:{line}:{column}",
+        "qualifiedName": spec.qualified_name,
+        "uri": file_name,
+        "line": line,
+        "column": column,
+        "range": source_range(node),
+    }
+
+
 def summary_for(name: MetricName, functions: list[FunctionJson], threshold: int) -> SummaryJson:
     """Aggregate maximum, average, and violations for one metric.
 
@@ -884,9 +938,10 @@ def analyze(request: dict[str, object]) -> AnalysisJson:
     except (SyntaxError, tokenize.TokenError) as error:
         line = getattr(error, "lineno", None) or getattr(error, "args", [None])[0]
         message = getattr(error, "msg", str(error))
-        return {"file": file_name, "metrics": [], "functions": [], "error": f"Syntax error on line {line}: {message}"}
+        return {"file": file_name, "metrics": [], "functions": [], "classes": [], "error": f"Syntax error on line {line}: {message}"}
     specs = collect_functions(tree)
     function_results = [function_result(spec, source_lines, file_name, thresholds) for spec in specs]
+    class_results = [class_result(spec, file_name) for spec in collect_classes(tree)]
     summaries = [
         summary_for("cyclomatic", function_results, thresholds.cyclomatic),
         summary_for("cognitive", function_results, thresholds.cognitive),
@@ -894,7 +949,7 @@ def analyze(request: dict[str, object]) -> AnalysisJson:
         summary_for("functionLength", function_results, thresholds.function_length),
         summary_for("parameters", function_results, thresholds.parameters),
     ]
-    return {"file": file_name, "metrics": summaries, "functions": function_results, "error": None}
+    return {"file": file_name, "metrics": summaries, "functions": function_results, "classes": class_results, "error": None}
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ def helper():
                 {"path": f"{root}/worker.py", "workspaceRoot": root, "module": "worker", "source": source_worker},
                 {"path": f"{root}/service.py", "workspaceRoot": root, "module": "service", "source": source_service},
             ],
-            "selectedFunctionId": f"{root}/app.py:3:0",
+            "selectedSymbolId": f"{root}/app.py:3:0",
             "maxNodes": 100,
         }
 
@@ -86,12 +86,12 @@ class Service:
 """
         nested_request: LifecycleRequest = {
             "files": [{"path": f"{root}/module.py", "workspaceRoot": root, "module": "module", "source": source}],
-            "selectedFunctionId": f"{root}/module.py:0:0",
+            "selectedSymbolId": f"{root}/module.py:0:0",
             "maxNodes": 100,
         }
         method_request: LifecycleRequest = {
             **nested_request,
-            "selectedFunctionId": f"{root}/module.py:6:4",
+            "selectedSymbolId": f"{root}/module.py:6:4",
         }
 
         nested_result = lifecycle(nested_request)
@@ -123,7 +123,7 @@ class Service:
                     "source": "def run():\n    return 1\n",
                 },
             ],
-            "selectedFunctionId": f"{root}/package/app.py:2:0",
+            "selectedSymbolId": f"{root}/package/app.py:2:0",
             "maxNodes": 100,
         }
 
@@ -160,7 +160,7 @@ def route():
             "files": [
                 {"path": f"{root}/app.py", "workspaceRoot": root, "module": "app", "source": source},
             ],
-            "selectedFunctionId": f"{root}/app.py:0:0",
+            "selectedSymbolId": f"{root}/app.py:0:0",
             "maxNodes": 100,
         }
         route_request: LifecycleRequest = {
@@ -168,7 +168,7 @@ def route():
                 {"path": f"{root}/app.py", "workspaceRoot": root, "module": "app", "source": source},
                 {"path": f"{root}/routes.py", "workspaceRoot": root, "module": "routes", "source": route_source},
             ],
-            "selectedFunctionId": f"{root}/app.py:0:0",
+            "selectedSymbolId": f"{root}/app.py:0:0",
             "maxNodes": 100,
         }
 
@@ -217,7 +217,7 @@ if __name__ == "__main__":
             "files": [
                 {"path": f"{root}/app.py", "workspaceRoot": root, "module": "app", "source": source},
             ],
-            "selectedFunctionId": f"{root}/app.py:4:0",
+            "selectedSymbolId": f"{root}/app.py:4:0",
             "maxNodes": 100,
         }
 
@@ -259,7 +259,7 @@ def entry(provider: Provider):
             "files": [
                 {"path": f"{root}/embedding.py", "workspaceRoot": root, "module": "embedding", "source": source},
             ],
-            "selectedFunctionId": f"{root}/embedding.py:14:4",
+            "selectedSymbolId": f"{root}/embedding.py:14:4",
             "maxNodes": 100,
         }
 
@@ -281,7 +281,7 @@ def entry(provider: Provider):
                 {"path": f"{root}/b.py", "workspaceRoot": root, "module": "b", "source": "def duplicate():\n    return 2\n"},
                 {"path": f"{root}/broken.py", "workspaceRoot": root, "module": "broken", "source": "def broken(:\n"},
             ],
-            "selectedFunctionId": f"{root}/a.py:0:0",
+            "selectedSymbolId": f"{root}/a.py:0:0",
             "maxNodes": 100,
         }
 
@@ -311,7 +311,7 @@ def third():
 """
         request: LifecycleRequest = {
             "files": [{"path": f"{root}/chain.py", "workspaceRoot": root, "module": "chain", "source": source}],
-            "selectedFunctionId": f"{root}/chain.py:0:0",
+            "selectedSymbolId": f"{root}/chain.py:0:0",
             "maxNodes": 2,
         }
 
@@ -320,6 +320,51 @@ def third():
         resolved_nodes = [node for node in result["nodes"] if node["role"] != "unresolved"]
         self.assertEqual(len(resolved_nodes), 2)
         self.assertTrue(result["truncated"])
+
+    def test_renders_class_ownership_construction_and_inheritance(self) -> None:
+        """Render exact structural relationships around a selected class.
+
+        Class pivots must explain how a class is created, extended, and implemented.
+        """
+        root = "/workspace"
+        source = """class Base:
+    def run(self):
+        return 1
+
+class Service(Base):
+    def __init__(self):
+        pass
+
+    def execute(self):
+        self.run()
+
+def build():
+    return Service()
+"""
+        request: LifecycleRequest = {
+            "files": [
+                {"path": f"{root}/service.py", "workspaceRoot": root, "module": "service", "source": source},
+            ],
+            "selectedSymbolId": f"{root}/service.py:4:0",
+            "maxNodes": 100,
+        }
+
+        result = lifecycle(request)
+
+        nodes_by_id = {node["id"]: node for node in result["nodes"]}
+        labels = {node["label"]: node for node in result["nodes"]}
+        relationships = {
+            (
+                nodes_by_id[edge["source"]]["label"],
+                nodes_by_id[edge["target"]]["label"],
+                edge["kind"],
+            )
+            for edge in result["edges"]
+        }
+        self.assertEqual(labels["Service"]["kind"], "class")
+        self.assertIn(("Base", "Service", "inherits"), relationships)
+        self.assertIn(("Service", "Service.execute", "contains"), relationships)
+        self.assertIn(("build", "Service", "constructs"), relationships)
 
 
 if __name__ == "__main__":

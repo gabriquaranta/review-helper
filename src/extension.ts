@@ -63,8 +63,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const pythonPath = vscode.workspace.getConfiguration("pythonMaintainability").get<string>("pythonPath", "python3");
     LifecyclePanel.create(
       context.extensionUri,
-      { functionId, label: qualifiedName },
-      (selectedFunctionId) => analyzeLifecycle(selectedFunctionId, pythonPath, context.extensionPath),
+      { symbolId: functionId, label: qualifiedName },
+      (selectedSymbolId) => analyzeLifecycle(selectedSymbolId, pythonPath, context.extensionPath),
     );
   };
   context.subscriptions.push(

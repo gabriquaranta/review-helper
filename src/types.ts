@@ -41,10 +41,20 @@ export interface FunctionResult {
   readonly metrics: readonly MetricResult[];
 }
 
+export interface ClassResult {
+  readonly id: string;
+  readonly qualifiedName: string;
+  readonly uri: string;
+  readonly line: number;
+  readonly column: number;
+  readonly range: SourceRange;
+}
+
 export interface AnalysisResult {
   readonly file: string;
   readonly metrics: readonly MetricSummary[];
   readonly functions: readonly FunctionResult[];
+  readonly classes: readonly ClassResult[];
   readonly error?: string;
 }
 
@@ -60,15 +70,19 @@ export interface LifecycleNode {
   readonly role: LifecycleNodeRole;
   readonly entrypointReason: string | null;
   readonly isTest: boolean;
+  readonly kind: "function" | "class" | "unresolved";
 }
+
+export type LifecycleEdgeKind = "calls" | "contains" | "constructs" | "inherits";
 
 export interface LifecycleEdge {
   readonly source: string;
   readonly target: string;
+  readonly kind: LifecycleEdgeKind;
 }
 
 export interface LifecycleResult {
-  readonly selectedFunctionId: string;
+  readonly selectedSymbolId: string;
   readonly nodes: readonly LifecycleNode[];
   readonly edges: readonly LifecycleEdge[];
   readonly truncated: boolean;
