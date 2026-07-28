@@ -1,0 +1,66 @@
+{
+  "name": "python-maintainability",
+  "displayName": "Python Maintainability",
+  "description": "Inspect maintainability metrics for the active Python file.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters"],
+  "activationEvents": ["onLanguage:python", "onView:pythonMaintainability.dashboard"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "pythonMaintainability.refresh", "title": "Python Maintainability: Refresh" }
+    ],
+    "configuration": {
+      "title": "Python Maintainability",
+      "properties": {
+        "pythonMaintainability.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python executable used for AST analysis."
+        },
+        "pythonMaintainability.cyclomaticThreshold": {
+          "type": "number", "default": 10, "minimum": 1,
+          "description": "Cyclomatic complexity threshold."
+        },
+        "pythonMaintainability.cognitiveThreshold": {
+          "type": "number", "default": 10, "minimum": 1,
+          "description": "Cognitive complexity threshold."
+        },
+        "pythonMaintainability.nestingThreshold": {
+          "type": "number", "default": 3, "minimum": 1,
+          "description": "Maximum nesting depth threshold."
+        },
+        "pythonMaintainability.functionLengthThreshold": {
+          "type": "number", "default": 50, "minimum": 1,
+          "description": "Logical-line function length threshold."
+        },
+        "pythonMaintainability.parameterThreshold": {
+          "type": "number", "default": 5, "minimum": 0,
+          "description": "Function parameter threshold."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "pythonMaintainability", "title": "Maintainability", "icon": "resources/maintainability.svg" }
+      ]
+    },
+    "views": {
+      "pythonMaintainability": [
+        { "id": "pythonMaintainability.dashboard", "name": "Active Python File", "type": "webview" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -watch -p ./tsconfig.json",
+    "package": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
