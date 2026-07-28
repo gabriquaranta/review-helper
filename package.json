@@ -10,8 +10,18 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
-      { "command": "pythonMaintainability.refresh", "title": "Python Maintainability: Refresh" }
+      { "command": "pythonMaintainability.refresh", "title": "Python Maintainability: Refresh" },
+      { "command": "pythonMaintainability.showLifecycle", "title": "Show lifecycle graph" }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "pythonMaintainability.showLifecycle",
+          "when": "editorLangId == python",
+          "group": "pythonMaintainability@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "Python Maintainability",
       "properties": {

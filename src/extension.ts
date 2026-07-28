@@ -5,7 +5,7 @@ import { analyzeDocument } from "./analyzer";
 import { DashboardProvider } from "./dashboard";
 import { analyzeLifecycle } from "./lifecycle";
 import { LifecyclePanel } from "./lifecyclePanel";
-import { AnalysisResult, MetricName, SourceRange } from "./types";
+import { AnalysisResult, ClassResult, FunctionResult, MetricName, SourceRange } from "./types";
 
 const metricNames: readonly MetricName[] = ["cyclomatic", "cognitive", "nesting", "functionLength", "parameters"];
 
@@ -26,6 +26,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let version = 0;
   let lastResult: AnalysisResult | undefined;
+  const openLifecycle = (symbolId: string, label: string): void => {
+    const pythonPath = vscode.workspace.getConfiguration("pythonMaintainability").get<string>("pythonPath", "python3");
+    LifecyclePanel.create(
+      context.extensionUri,
+      { symbolId, label },
+      (selectedSymbolId) => analyzeLifecycle(selectedSymbolId, pythonPath, context.extensionPath),
+    );
+  };
   const refresh = async (): Promise<void> => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== "python") {
@@ -60,20 +68,52 @@ export function activate(context: vscode.ExtensionContext): void {
     if (editor) { editor.selection = new vscode.Selection(line, 0, line, 0); editor.revealRange(new vscode.Range(line, 0, line, 0)); }
   };
   dashboard.onLifecycleRequested = (functionId, qualifiedName) => {
-    const pythonPath = vscode.workspace.getConfiguration("pythonMaintainability").get<string>("pythonPath", "python3");
-    LifecyclePanel.create(
-      context.extensionUri,
-      { symbolId: functionId, label: qualifiedName },
-      (selectedSymbolId) => analyzeLifecycle(selectedSymbolId, pythonPath, context.extensionPath),
-    );
+    openLifecycle(functionId, qualifiedName);
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => { void refresh(); }),
     vscode.workspace.onDidChangeTextDocument((event) => { if (event.document === vscode.window.activeTextEditor?.document) void refresh(); }),
     vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration("pythonMaintainability")) void refresh(); }),
     vscode.commands.registerCommand("pythonMaintainability.refresh", () => void refresh()),
+    vscode.commands.registerCommand("pythonMaintainability.showLifecycle", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "python") return;
+      await refresh();
+      const symbol = lastResult && lastResult.file === editor.document.uri.fsPath
+        ? enclosingSymbol(lastResult, editor.selection.active)
+        : undefined;
+      if (!symbol) {
+        void vscode.window.showInformationMessage("Place the cursor inside a Python function or class.");
+        return;
+      }
+      openLifecycle(symbol.id, symbol.qualifiedName);
+    }),
   );
   void refresh();
+}
+
+/**
+ * Find the innermost function or class containing an editor position.
+ *
+ * Selecting the smallest exact analyzer range makes methods win over their owning class.
+ */
+function enclosingSymbol(
+  result: AnalysisResult,
+  position: vscode.Position,
+): FunctionResult | ClassResult | undefined {
+  return [...result.functions, ...result.classes]
+    .filter((symbol) => toRange(symbol.range).contains(position))
+    .sort((left, right) => rangeSize(left.range) - rangeSize(right.range))[0];
+}
+
+/**
+ * Return a sortable size for one source range.
+ *
+ * Line-major sizing consistently orders nested symbols without inspecting source text.
+ */
+function rangeSize(range: SourceRange): number {
+  return (range.endLine - range.startLine) * 1_000_000
+    + range.endColumn - range.startColumn;
 }
 
 function applyDecorations(editor: vscode.TextEditor | undefined, result: AnalysisResult | undefined, decorations: Map<MetricName, vscode.TextEditorDecorationType>, selected?: MetricName): void {
