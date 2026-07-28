@@ -39,8 +39,10 @@ class FunctionJson(TypedDict):
     id: str
     name: str
     qualifiedName: str
+    uri: str
     line: int
     column: int
+    range: RangeJson
     metrics: list[MetricJson]
 
 
@@ -832,8 +834,10 @@ def function_result(spec: FunctionSpec, source_lines: set[int], file_name: str, 
         "id": f"{file_name}:{line}:{column}",
         "name": node.name,
         "qualifiedName": spec.qualified_name,
+        "uri": file_name,
         "line": line,
         "column": column,
+        "range": source_range(node),
         "metrics": function_metrics(spec, source_lines, thresholds),
     }
 

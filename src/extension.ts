@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { analyzeDocument } from "./analyzer";
 import { DashboardProvider } from "./dashboard";
+import { analyzeLifecycle } from "./lifecycle";
+import { LifecyclePanel } from "./lifecyclePanel";
 import { AnalysisResult, MetricName, SourceRange } from "./types";
 
 const metricNames: readonly MetricName[] = ["cyclomatic", "cognitive", "nesting", "functionLength", "parameters"];
@@ -56,6 +58,14 @@ export function activate(context: vscode.ExtensionContext): void {
   dashboard.onFunctionSelected = (line) => {
     const editor = vscode.window.activeTextEditor;
     if (editor) { editor.selection = new vscode.Selection(line, 0, line, 0); editor.revealRange(new vscode.Range(line, 0, line, 0)); }
+  };
+  dashboard.onLifecycleRequested = (functionId, qualifiedName) => {
+    const pythonPath = vscode.workspace.getConfiguration("pythonMaintainability").get<string>("pythonPath", "python3");
+    LifecyclePanel.create(
+      context.extensionUri,
+      { functionId, label: qualifiedName },
+      (selectedFunctionId) => analyzeLifecycle(selectedFunctionId, pythonPath, context.extensionPath),
+    );
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => { void refresh(); }),

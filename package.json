@@ -56,9 +56,11 @@
   "scripts": {
     "compile": "tsc -p ./tsconfig.json",
     "watch": "tsc -watch -p ./tsconfig.json",
-    "package": "npm run compile"
+    "package": "npm run compile",
+    "test": "python3 -m unittest tests/test_lifecycle.py && npm run compile"
   },
   "devDependencies": {
+    "@dagrejs/dagre": "1.1.8",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.4.0"

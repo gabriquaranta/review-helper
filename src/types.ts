@@ -34,8 +34,10 @@ export interface FunctionResult {
   readonly id: string;
   readonly name: string;
   readonly qualifiedName: string;
+  readonly uri: string;
   readonly line: number;
   readonly column: number;
+  readonly range: SourceRange;
   readonly metrics: readonly MetricResult[];
 }
 
@@ -44,4 +46,32 @@ export interface AnalysisResult {
   readonly metrics: readonly MetricSummary[];
   readonly functions: readonly FunctionResult[];
   readonly error?: string;
+}
+
+export type LifecycleNodeRole = "selected" | "entrypoint" | "caller" | "callee" | "both" | "unresolved";
+
+export interface LifecycleNode {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly uri: string | null;
+  readonly line: number | null;
+  readonly column: number | null;
+  readonly role: LifecycleNodeRole;
+  readonly entrypointReason: string | null;
+  readonly isTest: boolean;
+}
+
+export interface LifecycleEdge {
+  readonly source: string;
+  readonly target: string;
+}
+
+export interface LifecycleResult {
+  readonly selectedFunctionId: string;
+  readonly nodes: readonly LifecycleNode[];
+  readonly edges: readonly LifecycleEdge[];
+  readonly truncated: boolean;
+  readonly warnings: readonly string[];
+  readonly error: string | null;
 }
