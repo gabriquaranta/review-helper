@@ -366,6 +366,47 @@ def build():
         self.assertIn(("Service", "Service.execute", "contains"), relationships)
         self.assertIn(("build", "Service", "constructs"), relationships)
 
+    def test_tracks_functions_returned_and_passed_as_callbacks(self) -> None:
+        """Connect exact function objects handed to callback boundaries.
+
+        Callback factories and registries must remain visible without being mislabeled as direct calls.
+        """
+        root = "/workspace"
+        source = """def reset_used_docs():
+    return None
+
+def retrieve_callback():
+    return reset_used_docs
+
+def register_callbacks(registry):
+    callbacks = [reset_used_docs]
+    registry.add(reset_used_docs)
+    return callbacks
+"""
+        request: LifecycleRequest = {
+            "files": [
+                {"path": f"{root}/callbacks.py", "workspaceRoot": root, "module": "callbacks", "source": source},
+            ],
+            "selectedSymbolId": f"{root}/callbacks.py:0:0",
+            "maxNodes": 100,
+        }
+
+        result = lifecycle(request)
+
+        nodes_by_id = {node["id"]: node for node in result["nodes"]}
+        relationships = {
+            (
+                nodes_by_id[edge["source"]]["label"],
+                nodes_by_id[edge["target"]]["label"],
+                edge["kind"],
+            )
+            for edge in result["edges"]
+        }
+        self.assertIn(("retrieve_callback", "reset_used_docs", "references"), relationships)
+        self.assertIn(("register_callbacks", "reset_used_docs", "references"), relationships)
+        selected = next(node for node in result["nodes"] if node["label"] == "reset_used_docs")
+        self.assertIsNone(selected["entrypointReason"])
+
 
 if __name__ == "__main__":
     unittest.main()

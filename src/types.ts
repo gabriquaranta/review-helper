@@ -73,7 +73,7 @@ export interface LifecycleNode {
   readonly kind: "function" | "class" | "unresolved";
 }
 
-export type LifecycleEdgeKind = "calls" | "contains" | "constructs" | "inherits";
+export type LifecycleEdgeKind = "calls" | "references" | "contains" | "constructs" | "inherits";
 
 export interface LifecycleEdge {
   readonly source: string;

@@ -58,7 +58,7 @@ class LifecycleEdgeJson(TypedDict):
 
     source: str
     target: str
-    kind: Literal["calls", "contains", "constructs", "inherits"]
+    kind: Literal["calls", "references", "contains", "constructs", "inherits"]
 
 
 class LifecycleResultJson(TypedDict):
@@ -296,6 +296,96 @@ class BodyCallCollector(ast.NodeVisitor):
 
         Lambdas have no stable function row identity in the current extension.
         """
+
+
+class CallableReferenceCollector(ast.NodeVisitor):
+    """Collect expressions that hand callable values to another execution boundary.
+
+    Restricting collection to returns, assignments, collections, and call arguments avoids treating ordinary reads as calls.
+    """
+
+    def __init__(self, body: list[ast.stmt]) -> None:
+        """Initialize reference collection for one function body.
+
+        Function-local traversal prevents nested definitions from inheriting their parent's reference edges.
+        """
+        self.body = body
+        self.references: list[ast.expr] = []
+
+    def collect(self) -> list[ast.expr]:
+        """Collect callable candidate expressions from the root body.
+
+        Statement traversal finds callback handoffs regardless of their surrounding control flow.
+        """
+        for statement in self.body:
+            self.visit(statement)
+        return self.references
+
+    def visit_Return(self, node: ast.Return) -> None:
+        """Collect callable values returned to a caller or framework.
+
+        Returned function objects are the common factory pattern used by callback registries.
+        """
+        if node.value:
+            self._collect_expression(node.value)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Collect callable values stored by assignment.
+
+        Assignment edges expose callback aliases and callback collections without following later mutation.
+        """
+        self._collect_expression(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Collect callable values stored by annotated assignment.
+
+        Annotated callback registries have the same static ownership meaning as ordinary assignments.
+        """
+        if node.value:
+            self._collect_expression(node.value)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Collect callable values passed as call arguments.
+
+        The callee expression is excluded because direct invocation is represented by a call edge.
+        """
+        for argument in node.args:
+            self._collect_expression(argument)
+        for keyword in node.keywords:
+            self._collect_expression(keyword.value)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Skip nested synchronous definitions.
+
+        Their callback references belong to their own graph node.
+        """
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Skip nested asynchronous definitions.
+
+        Their callback references belong to their own graph node.
+        """
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Skip lambda bodies.
+
+        Anonymous functions have no stable symbol identity in the lifecycle graph.
+        """
+
+    def _collect_expression(self, expression: ast.expr) -> None:
+        """Collect names and dotted attributes embedded in one value expression.
+
+        Calls contribute only their arguments so constructor and invocation targets are never mislabeled as references.
+        """
+        if isinstance(expression, (ast.Name, ast.Attribute)):
+            self.references.append(expression)
+            return
+        if isinstance(expression, ast.Call):
+            self.visit_Call(expression)
+            return
+        for child in ast.iter_child_nodes(expression):
+            if isinstance(child, ast.expr):
+                self._collect_expression(child)
 
 
 class BindingCollector(ast.NodeVisitor):
@@ -569,19 +659,19 @@ def resolve_class_reference(
     return next((candidate for candidate in candidates if candidate in class_canonicals), None)
 
 
-def resolve_call(
-    call: ast.Call,
+def resolve_callable_reference(
+    expression: ast.expr,
     owner: FunctionDefinition,
     definitions: dict[str, FunctionDefinition],
     bindings: dict[str, str],
 ) -> tuple[str | None, str]:
-    """Resolve one call to a known canonical function when exact.
+    """Resolve one callable expression to a known workspace function when exact.
 
-    Unresolved labels are returned for transparent graph leaves instead of guessed edges.
+    Shared resolution keeps direct calls and callback references consistent.
     """
-    parts = attribute_parts(call.func)
+    parts = attribute_parts(expression)
     if not parts:
-        return None, "<dynamic call>"
+        return None, "<dynamic reference>"
     label = ".".join(parts)
     candidates: list[str] = []
     first = parts[0]
@@ -608,6 +698,19 @@ def resolve_call(
         if candidate in definitions:
             return candidate, label
     return None, label
+
+
+def resolve_call(
+    call: ast.Call,
+    owner: FunctionDefinition,
+    definitions: dict[str, FunctionDefinition],
+    bindings: dict[str, str],
+) -> tuple[str | None, str]:
+    """Resolve one call to a known canonical function when exact.
+
+    Unresolved labels are returned for transparent graph leaves instead of guessed edges.
+    """
+    return resolve_callable_reference(call.func, owner, definitions, bindings)
 
 
 def resolve_module_call(
@@ -763,7 +866,7 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
             "error": "The selected symbol was not found in the workspace index.",
         }
 
-    EdgeKind = Literal["calls", "contains", "constructs", "inherits"]
+    EdgeKind = Literal["calls", "references", "contains", "constructs", "inherits"]
     resolved_edges: set[tuple[str, str, EdgeKind]] = set()
     unresolved_by_owner: dict[str, set[str]] = {}
     outgoing: dict[str, set[str]] = {canonical: set() for canonical in symbols_by_canonical}
@@ -836,6 +939,10 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
                     connect(owner.canonical, constructed, "constructs")
                 else:
                     unresolved_by_owner.setdefault(owner.canonical, set()).add(label)
+        for reference in CallableReferenceCollector(owner.node.body).collect():
+            target, _ = resolve_callable_reference(reference, owner, by_canonical, bindings)
+            if target:
+                connect(owner.canonical, target, "references")
 
     entrypoint_reasons: dict[str, str] = {}
     for definition in by_canonical.values():
@@ -854,7 +961,10 @@ def lifecycle(request: LifecycleRequest) -> LifecycleResultJson:
                 if target:
                     entrypoint_reasons[target] = "__main__ guard entrypoint"
     for canonical in by_canonical:
-        if not any(target == canonical and kind == "calls" for _, target, kind in resolved_edges):
+        if not any(
+            target == canonical and kind in {"calls", "references"}
+            for _, target, kind in resolved_edges
+        ):
             entrypoint_reasons.setdefault(canonical, "No resolved callers")
 
     max_nodes = max(1, min(request["maxNodes"], 100))
