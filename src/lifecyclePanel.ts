@@ -386,7 +386,7 @@ function graphContent(
         const rect=svg.getBoundingClientRect();
         const deltaUnit=event.deltaMode===1?16:event.deltaMode===2?rect.height:1;
         if(event.ctrlKey){
-          const scale=Math.max(0.8,Math.min(1.25,Math.exp(event.deltaY*deltaUnit*0.002)));
+          const scale=Math.max(0.75,Math.min(1.33,Math.exp(event.deltaY*deltaUnit*0.01)));
           const x=view.x+(event.clientX-rect.left)/rect.width*view.w;
           const y=view.y+(event.clientY-rect.top)/rect.height*view.h;
           view={x:x-(x-view.x)*scale,y:y-(y-view.y)*scale,w:view.w*scale,h:view.h*scale};
