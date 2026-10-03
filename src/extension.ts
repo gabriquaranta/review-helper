@@ -25,6 +25,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(...decorations.values());
 
   let version = 0;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let analysisController: AbortController | undefined;
   let lastResult: AnalysisResult | undefined;
   const openLifecycle = (symbolId: string, label: string): void => {
     const pythonPath = vscode.workspace.getConfiguration("pythonMaintainability").get<string>("pythonPath", "python3");
@@ -35,13 +37,23 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
   const refresh = async (): Promise<void> => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
+    }
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== "python") {
+      version += 1;
+      analysisController?.abort();
+      analysisController = undefined;
       dashboard.update(undefined);
       clearDecorations(decorations);
       return;
     }
     const currentVersion = ++version;
+    analysisController?.abort();
+    const controller = new AbortController();
+    analysisController = controller;
     const config = vscode.workspace.getConfiguration("pythonMaintainability");
     const result = await analyzeDocument(editor.document, config.get<string>("pythonPath", "python3"), {
       cyclomatic: config.get<number>("cyclomaticThreshold", 10),
@@ -49,11 +61,25 @@ export function activate(context: vscode.ExtensionContext): void {
       nesting: config.get<number>("nestingThreshold", 3),
       functionLength: config.get<number>("functionLengthThreshold", 50),
       parameters: config.get<number>("parameterThreshold", 5),
-    }, context.extensionPath);
+    }, context.extensionPath, controller.signal);
+    if (analysisController === controller) analysisController = undefined;
     if (currentVersion !== version || vscode.window.activeTextEditor?.document !== editor.document) return;
     lastResult = result;
     dashboard.update(result);
     applyDecorations(editor, result, decorations);
+  };
+  /** Queue analysis after editor changes settle.
+   * Aborting now prevents the previous snapshot from consuming resources during the debounce window.
+   */
+  const scheduleRefresh = (): void => {
+    version += 1;
+    analysisController?.abort();
+    analysisController = undefined;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      void refresh();
+    }, 200);
   };
   dashboard.onMetricSelected = (metric) => {
     applyDecorations(vscode.window.activeTextEditor, lastResult, decorations, metric);
@@ -72,7 +98,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => { void refresh(); }),
-    vscode.workspace.onDidChangeTextDocument((event) => { if (event.document === vscode.window.activeTextEditor?.document) void refresh(); }),
+    vscode.workspace.onDidChangeTextDocument((event) => { if (event.document === vscode.window.activeTextEditor?.document) scheduleRefresh(); }),
     vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration("pythonMaintainability")) void refresh(); }),
     vscode.commands.registerCommand("pythonMaintainability.refresh", () => void refresh()),
     vscode.commands.registerCommand("pythonMaintainability.showLifecycle", async () => {
