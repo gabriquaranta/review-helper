@@ -8,12 +8,8 @@ This VS Code extension analyzes only the active Python editor and displays maint
 - Function length: green
 - Parameters: yellow
   
-<table>
-<tr>
-<td><img src="resources/Untitled.png" alt="Code Highlight"></td>
-<td><img src="resources/graph.png" alt="Lifecycle Graph"></td>
-</tr>
-</table>
+![Code Highlight](resources/Untitled.png)
+![Lifecycle Graph](resources/graph.png)
 
 Click a metric in the dashboard to show only that metric's source decorations. Analysis uses the active editor buffer, including unsaved changes, and runs through the configured Python executable, defaulting to `python3` on macOS.
 
